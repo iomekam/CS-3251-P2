@@ -1,0 +1,23 @@
+from twisted.internet import protocol, reactor
+class Echo(protocol.Protocol):
+    def dataReceived(self, data):
+        print data
+        self.transport.write(data)
+
+class EchoFactory(protocol.Factory):
+    def buildProtocol(self, addr):
+        return Echo()
+
+reactor.listenTCP(8000, EchoFactory())
+reactor.run()
+
+class EchoClient(protocol.Protocol):
+   def __init__(self, message):
+       self.message = message
+
+   def connectionMade(self):
+       self.transport.write(self.message)
+
+   def dataReceived(self, data):
+       print "Server said:", data
+       self.transport.loseConnection()
