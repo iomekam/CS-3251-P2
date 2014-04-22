@@ -9,7 +9,7 @@ import struct
 from bitstring import *
 
 class State:
-       Handshake, Bitfield, Choke, UnChoke, Interested, Have, NotInterested, Request, Piece = range(9)
+       Handshake, Bitfield, Choke, UnChoke, Interested, Have, NotInterested, Request, Piece, KeepAlive = range(10)
 
 class EchoClient(protocol.Protocol):
        def __init__(self, message):
@@ -23,6 +23,7 @@ class EchoClient(protocol.Protocol):
            self.payloadStillFetching = False
            self.hasPayload = False
            self.payloadBit = BitArray()
+           self.nextMessage = False
 
        toHex = lambda self, x:"0x".join([hex(ord(c))[:].zfill(2) for c in x])
            
@@ -31,6 +32,14 @@ class EchoClient(protocol.Protocol):
 
        def getMessage(self, data):
               print(data.split("gg"))
+              if(data == ''):
+                     self.state = State.KeepAlive
+                     return
+              
+              if(ord(data[3]) == 0):
+                     self.state = State.KeepAlive
+                     return
+
               data = [ord(data[0]), ord(data[1]), ord(data[2]), ord(data[3]), ord(data[4])]
               if(data[3] == 1 and data[4] == 0):
                      self.state = State.Choke
@@ -38,7 +47,7 @@ class EchoClient(protocol.Protocol):
                      self.state = State.UnChoke
               elif(data[3] == 1 and data[4] == 2):
                      self.state = State.Interested
-              elif(data[3] == 5 and data[4] == 1):
+              elif(data[3] == 5 and data[4] == 4):
                      self.state = State.Have
                      self.hasPayload = True
               elif(data[3] == 1 and data[4] == 3):
@@ -53,42 +62,68 @@ class EchoClient(protocol.Protocol):
                      self.state = State.Bitfield
                      self.hasPayload = True
 
+              print(str(self.state))
+
        def getPayload(self, data):
               if(len(data) < self.bytesLeft):
                      self.payload = self.payload + data
                      self.bytesLeft -= len(data)
                      self.payloadStillFetching = True
+                     self.nextMessage = False
               else:
                      self.payload = self.payload + data[:self.bytesLeft]
                      data = data[self.bytesLeft:]
                      self.bytesLeft = 0;
-                     self.payloadBit = BitArray(self.toHex(self.payload))
-                     print(self.payloadBit.bin)
+                     if(self.state == State.Bitfield):    
+                            self.payloadBit = BitArray(self.toHex(self.payload))
                      self.payloadStillFetching = False
                      self.hasPayload = False
-                     return data
+                     self.nextMessage = True
+                     self.payload = ""
+                     
+              return data
+       def sendInterested(self):
+              message = struct.pack("!2x2s1s", "13", "6")
+              #message = "\x00\x00\x01\x30\x06"
+              self.transport.write(message)
+              print("wrote")
+       def sendRequest(self):
+              messageLen = "0013"
+              messageID = "6"
+              index = "0000"
+              begin = "0000"
+              length = "4000"
+              
+
+              message = messageLen + messageID + index + begin + str(length);
+              self.transport.write(message)
+              
 
        def parseData(self, data):
+              self.getMessage(data[:5])
               if(self.hasPayload and not self.payloadStillFetching):
-                     self.getMessage(data[:5])
                      if(self.state == State.Bitfield):
                             self.bytesLeft = ord(data[3]) - 1
                      if(self.state == State.Have):
                             self.bytesLeft = 4
-                     self.getPayload(data[5:])
-              elif(self.hasPayload and self.payloadStillFetching):
+                     data = self.getPayload(data[5:])
+              elif(not self.nextMessage and self.hasPayload and self.payloadStillFetching):
                      data = self.getPayload(data)
-                     if(not self.payloadStillFetching):
-                            self.getMessage(data[:5])
-                            self.parseData(data)
               elif(not self.hasPayload and not self.payloadStillFetching):
                      print("No payload")
-                     self.getMessage(data[:5])
+
+              print(str(self.state))
+              if(self.state == State.Interested):
+                     print("terst")
+                     self.sendInterested()
+
+              if(self.state == State.KeepAlive):
+                     pass
+              elif(self.nextMessage):
                      if(len(data) > 5):
-                            self.parseData(data[:5])
+                         self.parseData(data)
        def dataReceived(self, data):
            self.data = self.data + data
-           print("hit")
            if(self.state == State.Handshake):
                   self.hasPayload = True
                   self.parseData(data[68:])
@@ -149,8 +184,8 @@ class BitClient:
     
     def sendHandshake(self):
         handshake = "\x13BitTorrent protocol" + struct.pack("!8x20s20s", self.infoHash, self.peerID)
-        print(len(handshake))
-        self.sendToSinglePeer("127.0.0.1", 45030, handshake)
+        ip = self.getIPPortList();
+        self.sendToSinglePeer(ip[0][0], ip[0][1], handshake)
 
     def sendToSinglePeer(self, ip, port, message):
         reactor.connectTCP(ip, port, EchoFactory(message))
