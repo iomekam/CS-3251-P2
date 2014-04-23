@@ -32,7 +32,11 @@ class EchoClient(protocol.Protocol):
            self.index = 0;
            self.pieceDone = False;
            self.pLength = int(bDict["info"]["piece length"]);
-           self.endLength = 0
+           self.endLength = int(bDict["info"]["length"]) % self.pLength
+           if(self.endLength == 0):
+                  self.endLength = self.pLength
+           print "aaa", int(bDict["info"]["length"])
+           print "endlength", self.endLength
            self.pieceBuffer = 2**14
            self.pieceRemaining = self.pLength
 
@@ -106,7 +110,7 @@ class EchoClient(protocol.Protocol):
                             #print struct.unpack("!20s", self.bDict["info"]["pieces"][:20])
                             print len(self.payload)#.split("gg")
 
-                            if(len(self.requestList) == 1):
+                            if(len(self.requestList) == 0):
                                 f = open(self.bDict["info"]["name"], "wb")
                                 for item in self.pieceList:
                                     if(item != None):
@@ -126,10 +130,12 @@ class EchoClient(protocol.Protocol):
               self.transport.write(message)
               print("wrote")
        def sendRequest(self, index, offset):
+              print "OF", offset
+              print "I", index
               message = struct.pack("!IBIII", 13, 6, int(index), int(offset), 2**14)
               self.transport.write(message)
        def makeRequest(self):
-              for i in range(self.pieceNum):
+              for i in range(self.pieceNum - 10, self.pieceNum):
                      if(self.payloadBit[i]):
                             self.requestList.append(i)
                      else:
@@ -151,6 +157,9 @@ class EchoClient(protocol.Protocol):
                             self.bytesLeft = 4
                      if(self.state == State.Piece):
                             self.bytesLeft = self.pLength
+                            self.pieceBufferer = 2**14
+                            if(self.requestList == 0):
+                                   self.bytesLeft = self.endLength
                             data = data[8:]
                             #print data.split("dd")
                      data = self.getPayload(data[5:])
@@ -164,7 +173,11 @@ class EchoClient(protocol.Protocol):
 
               if(self.state == State.Piece and self.pieceBuffer == 0):
                      self.pieceBuffer = 2**14
-                     self.sendRequest(self.index, self.pLength - self.bytesLeft)
+                     base = self.pLength
+                     if(len(self.requestList) == 0):
+                            base = self.endLength
+                            print "base:", base
+                     self.sendRequest(self.index, base - self.bytesLeft)
               if(self.state == State.UnChoke):
                      self.makeRequest()
                      self.index = self.getNextRequest()
@@ -194,6 +207,7 @@ class EchoClient(protocol.Protocol):
                          self.pieceList = self.pieceNum * [None]
                          self.sendInterested()
                   print "testrtttttttttttttttttttt"
+                  print ";;;"
            else:
                   self.parseData(data)
                   #self.sendInterested()
