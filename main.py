@@ -18,7 +18,6 @@ class EchoClient(protocol.Protocol):
            self.bytesLeft = -1
            self.payload = ""
            self.bufferList = []
-           self.data = ""
            self.state = State.Handshake
            self.payloadStillFetching = False
            self.hasPayload = False
@@ -32,11 +31,7 @@ class EchoClient(protocol.Protocol):
            self.index = 0;
            self.pieceDone = False;
            self.pLength = int(bDict["info"]["piece length"]);
-           self.endLength = int(bDict["info"]["length"]) % self.pLength
-           if(self.endLength == 0):
-                  self.endLength = self.pLength
-           print "aaa", int(bDict["info"]["length"])
-           print "endlength", self.endLength
+           self.endLength = (int(bDict["info"]["length"]) % self.pLength)
            self.pieceBuffer = 2**14
            self.pieceRemaining = self.pLength
 
@@ -118,6 +113,7 @@ class EchoClient(protocol.Protocol):
                                     else:
                                         print "Nooo"
                                 f.close()
+                                self.transport.loseConnection()
                                 
                      self.payloadStillFetching = False
                      self.hasPayload = False
@@ -129,13 +125,11 @@ class EchoClient(protocol.Protocol):
               message = struct.pack("!IB", 1, 2 )
               self.transport.write(message)
               print("wrote")
-       def sendRequest(self, index, offset):
-              print "OF", offset
-              print "I", index
-              message = struct.pack("!IBIII", 13, 6, int(index), int(offset), 2**14)
+       def sendRequest(self, index, offset, length=2**14):
+              message = struct.pack("!IBIII", 13, 6, int(index), int(offset), length)
               self.transport.write(message)
        def makeRequest(self):
-              for i in range(self.pieceNum - 10, self.pieceNum):
+              for i in range(self.pieceNum):
                      if(self.payloadBit[i]):
                             self.requestList.append(i)
                      else:
@@ -158,7 +152,7 @@ class EchoClient(protocol.Protocol):
                      if(self.state == State.Piece):
                             self.bytesLeft = self.pLength
                             self.pieceBufferer = 2**14
-                            if(self.requestList == 0):
+                            if(len(self.requestList) == 0):
                                    self.bytesLeft = self.endLength
                             data = data[8:]
                             #print data.split("dd")
@@ -174,10 +168,12 @@ class EchoClient(protocol.Protocol):
               if(self.state == State.Piece and self.pieceBuffer == 0):
                      self.pieceBuffer = 2**14
                      base = self.pLength
+                     leng = 2**14
                      if(len(self.requestList) == 0):
                             base = self.endLength
-                            print "base:", base
-                     self.sendRequest(self.index, base - self.bytesLeft)
+                            if(self.bytesLeft < 2**14):
+                                   leng = self.bytesLeft
+                     self.sendRequest(self.index, base - self.bytesLeft, leng)
               if(self.state == State.UnChoke):
                      self.makeRequest()
                      self.index = self.getNextRequest()
@@ -197,7 +193,7 @@ class EchoClient(protocol.Protocol):
                      self.sendRequest(self.index, 0)
                                 
        def dataReceived(self, data):
-           self.data = self.data + data
+           print "hit"
            if(self.state == State.Handshake):
                   self.hasPayload = True
                   print(struct.unpack("!8x20s20s", data[20:68]))
@@ -224,6 +220,7 @@ class EchoFactory(protocol.ClientFactory):
                self.message = message
                self.d = bDict
         def buildProtocol(self, addr):
+               print "Connecting to peer "
                return EchoClient(self.message, self.d)
 
         def clientConnectionFailed(self, connector, reason):
@@ -232,6 +229,7 @@ class EchoFactory(protocol.ClientFactory):
 
         def clientConnectionLost(self, connector, reason):
                print "Connection lost."
+               print reason
                reactor.stop()
 
 class BitClient:
@@ -273,7 +271,7 @@ class BitClient:
         handshake = "\x13BitTorrent protocol" + struct.pack("!8x20s20s", self.infoHash, self.peerID)
         ip = self.getIPPortList();
         self.sendToSinglePeer("127.0.0.1", 45030, handshake)
-        #self.sendToSinglePeer(ip[0][0], ip[0][1], handshake)
+        #self.sendToSinglePeer(ip[5][0], ip[5][1], handshake)
 
     def sendToSinglePeer(self, ip, port, message):
         reactor.connectTCP(ip, port, EchoFactory(message, self.bDict))
